@@ -519,7 +519,7 @@ class RobotArm(object):
 #
 # ############################
 
-training = True
+training = False
 to_continue = False
 
 angle = 5
