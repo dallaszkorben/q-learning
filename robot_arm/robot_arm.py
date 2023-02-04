@@ -1,34 +1,35 @@
 #!/home/akoel/Projects/python/ai/q-learning/robot_arm/env/bin/python
 
+import time
 import numpy as np
 import math 
 import pickle
 from functools import partial
 from pprint import pprint
-
-
-
-
-
+from robot_arm_animate import RobotArmAnimate 
+from shapely.geometry import LineString
+from shapely.geometry import Polygon
 
 class RobotArm(object):
 
     GOAL_REWARD = 999
 
-    def __init__(self, angle_step, alpha=0.9, gamma=0.75, goal_position=((95,5),(105,15))):
+    def __init__(self, angle_step, alpha=0.9, gamma=0.75, goal_position=((95,5),(105,15)), blocker_position_list=[]):
 
         self.alpha = alpha			# Learning rate
         self.gamma = gamma			# Discount factor 
-        self.angle_step = angle_step		 
+        self.angle_step = angle_step
         self.goal_position = goal_position
+        self.blocker_position_list = blocker_position_list
+        self.blocker_rectangles_list = []
 
         self.Q = {}
 
         # Arms
-        self.arms = [
-            {"name": "arm0", "length": 100, "min_angle": 0, "max_angle": 90},
-            {"name": "arm1", "length": 100, "min_angle": 0, "max_angle": 90},
-            {"name": "arm2", "length": 100, "min_angle": 0, "max_angle": 90}
+        self.arms_list = [
+            {"name": "arm0", "length": 100, "min_angle": -45, "max_angle": 45},
+            {"name": "arm1", "length": 80, "min_angle": -45, "max_angle": 135},
+            {"name": "arm2", "length": 50, "min_angle": -45, "max_angle": 90}
         ]
 
         self.actions=[
@@ -40,6 +41,7 @@ class RobotArm(object):
             partial(self.get_state_with_decreased_angle, decrease_by=angle_step, arm_index=2),
             partial(self.get_state_with_idle),
         ]
+
 
     def print_progress_bar (self, iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', print_end = "\r"):
         """
@@ -94,7 +96,7 @@ class RobotArm(object):
         prev_pos = (0,0)
         prev_angle = 0
         pos = []
-        for index, arm in enumerate(self.arms):
+        for index, arm in enumerate(self.arms_list):
             angle = np.pi*(degree_list[index])/180 + prev_angle
             prev_angle = angle
             y = arm["length"] * math.cos(angle) + prev_pos[1]
@@ -136,15 +138,12 @@ class RobotArm(object):
 
         return np.isclose(value, 0, rtol=1e-05, atol=1e-08, equal_nan=False)
 
-
-
-
     def is_valid_state(self, actual_state):
         """
         It checkes if the actual State is valid.
         It is valid, if
         - all joints are above the ground: y > 0
-        - all the angles of the arms are between the range configured in the "self.arms"
+        - all the angles of the arms are between the range configured in the "self.arms_list"
         """
 
         pos=self.get_arms_end_positions(actual_state)
@@ -156,27 +155,39 @@ class RobotArm(object):
         It checkes if the actual position is valid.
         It is valid, if
         - all joints are above the ground: y > 0
-        - all the angles of the arms are between the range configured in the "self.arms"
+        - all the angles of the arms are between the range configured in the "self.arms_list"
         """
 
         all_ok = True
-        for index, arm in enumerate(self.arms):
+        arm_start_pos = (0, 0)
+        # go through all arms
+        for index, arm in enumerate(self.arms_list):
+
+            arm_end_pos = (actual_position[index][0], actual_position[index][1])
 
             # one joint is below the ground: y < 0
-            if actual_position[index][1] < 0 and not self.is_zero(actual_position[index][1]):
+            if arm_end_pos[1] < 0 and not self.is_zero(arm_end_pos[1]):
                 all_ok = False
-                break
+                return False
+                #break
 
             # one angle is out of the valid range
             if actual_position[index][2] > arm["max_angle"] or actual_position[index][2] < arm["min_angle"]:
                 all_ok = False
-                break
+                return False
+                #break
 
+            # Blocked position
+            line = LineString([arm_start_pos, arm_end_pos])
+            for rectangle in self.blocker_rectangles_list:
+                if line.crosses(rectangle):
+                    return False
+
+            arm_start_pos = arm_end_pos
         return all_ok
 
-
     def is_goal_position(self, pos):
-        arm_index = len(self.arms) - 1
+        arm_index = len(self.arms_list) - 1
 
         # x, y reached the end-position (goal)
         if pos[arm_index][0] >= self.goal_position[0][0] and pos[arm_index][0] <= self.goal_position[1][0] and pos[arm_index][1] >= self.goal_position[0][1] and pos[arm_index][1] <= self.goal_position[1][1]:
@@ -222,6 +233,7 @@ class RobotArm(object):
 
                     # the arm reached the goal position
                     if self.is_goal_position(pos):
+
                         reward = self.GOAL_REWARD
                         self.is_goal_reward = True
 
@@ -243,10 +255,10 @@ class RobotArm(object):
         If there is, then this State is added to the Q table with 0 values
         If there is No, then this State will be ignored
         """
-        for i in range(self.arms[arm_index]["min_angle"], self.arms[arm_index]["max_angle"] + self.angle_step, self.angle_step):
+        for i in range(self.arms_list[arm_index]["min_angle"], self.arms_list[arm_index]["max_angle"] + self.angle_step, self.angle_step):
             actual_preposition_list = preposition_list + [str(i)]
 
-            if arm_index < len(self.arms) - 1:
+            if arm_index < len(self.arms_list) - 1:
                 self.recursively_fill_up_q_table(arm_index + 1, actual_preposition_list)
 
             # the deepest loop
@@ -256,15 +268,11 @@ class RobotArm(object):
                 self.bar_index += 1
                 self.print_progress_bar(self.bar_index, self.bar_size, prefix = 'Fill up progress:', suffix = 'Complete', length = 50)
 
+                # Should we have to filter out the States which have NO valid next State or not?
+
                 if self.is_valid_state(state):
                     vector = [0,0,0,0,0,0,0]
                     self.Q[state] = vector
-
-#    def is_goal_reward():
-#        for item in self.Q.items():
-#            if item[6]:
-#                return True
-#        return False
 
     def fill_up_q_table(self):
         """
@@ -274,7 +282,7 @@ class RobotArm(object):
 
         # calculate the theoretical size of the States
         self.bar_size = 1
-        for arm in self.arms:
+        for arm in self.arms_list:
             self.bar_size *= (arm["max_angle"] - arm["min_angle"] + self.angle_step) / self.angle_step
         self.bar_index = 0
 
@@ -287,22 +295,34 @@ class RobotArm(object):
 
         print("Length of State list: {0}".format(len(self.Q)))
 
-    def train(self, train_steps=100000):
+    def training(self, start_training_steps=0, end_training_steps=100000, file_name="my_file"):
         """
         Trains the robot arm in the given train_steps times.
         It takes the Q table, picks up randomly a State and a possible next State and calculates the Q value for the Action
         """
 
-        # generates and fills up the Q table
-        self.fill_up_q_table()
+        # generates the blocler_rectangles_list
+        self.blocker_rectangles_list = []
+        for blocker_pos in blocker_position_list:
+            rectangle = Polygon([blocker_pos[0], [blocker_pos[1][0], blocker_pos[0][1]], blocker_pos[1], [blocker_pos[0][0],blocker_pos[1][1]]])
+            self.blocker_rectangles_list.append(rectangle)
+
+        # empty Q table
+        if not self.Q:
+
+            # generates and fills up the Q table
+            self.fill_up_q_table()
 
         # generates the possible state list out of the Q table
         state_list = list(self.Q.keys())
 
-        for t in range(train_steps):
+        print("{0} - {1}".format(start_training_steps, end_training_steps))
+
+        for t in range(start_training_steps, end_training_steps):
 
             # progress bar
-            self.print_progress_bar(t, train_steps-1, prefix = 'Train   Progress:', suffix = 'Complete', length = 50)
+            ##self.print_progress_bar(t, training_steps-1, prefix = 'Train   Progress:', suffix = 'Complete with goal reward ' if self.is_goal_reward else 'Complete ', length = 50)
+            self.print_progress_bar(t, end_training_steps-1, prefix = 'Train   Progress:', suffix = "Complete ({0}/{1}) - {2}".format(end_training_steps, t, "goal reward found" if self.is_goal_reward else ""),length = 50)
 
             # pick up a random state
             from_state = np.random.choice(state_list)
@@ -311,42 +331,134 @@ class RobotArm(object):
             possible_states_with_reward_list = self.get_possible_states_with_reward(from_state)
 
             # picks up a random state out of the possible states IF the Action's Reward is > 0. The Reward=0 means, the State is not reachable from the actual State
-            to_state_with_reward = np.random.choice([item for item in possible_states_with_reward_list if item["reward"] > 0])
+            #print(possible_states_with_reward_list)
 
-            # collects data for the calculation
-            to_state = to_state_with_reward["new_state"]
-            action_index = to_state_with_reward["action_index"]
-            action_reward = to_state_with_reward["reward"]
 
-            Q_actual = self.Q[from_state][action_index]
-            Q_next_max = np.max(self.Q[to_state])
+            # The dilema here is that we have states which have NO valid next state
+            # To filter them out in the fill_up_q_table() method takes a lot of time
+            # So temporarialy we keep it as it is
+            if any(possible_state['reward'] > 0 for possible_state in possible_states_with_reward_list):
+                to_state_with_reward = np.random.choice([item for item in possible_states_with_reward_list if item["reward"] > 0])
 
-            # calculates the Bellman equation
-            TD = action_reward + self.gamma * Q_next_max - Q_actual
-            self.Q[from_state][action_index] += self.alpha * TD
+                # collects data for the calculation
+                to_state = to_state_with_reward["new_state"]
+                action_index = to_state_with_reward["action_index"]
+                action_reward = to_state_with_reward["reward"]
+
+                Q_actual = self.Q[from_state][action_index]
+                Q_next_max = np.max(self.Q[to_state])
+
+                # calculates the Bellman equation
+                TD = action_reward + self.gamma * Q_next_max - Q_actual
+                self.Q[from_state][action_index] += self.alpha * TD
+
+            # save Q table after every 10000 steps
+            if t % 10000 == 0:
+                my_robot_arm.save_q(file_name, t)
+
+        my_robot_arm.save_q(file_name, end_training_steps)
 
         if self.is_goal_reward:
             return True
+
         else:
             print("!!! There was NO goal Action found !!!")
             return False
 
-#        self.save_q()
 
 
-    def save_q(self, name):
-        fw = open('q_' + str(name), 'wb')
-        pickle.dump(self.Q, fw)
-        fw.close()
-        return fw
+
+
+
+
+
+
+
+    def systematic_training(self, start_training_steps=0, end_training_steps=100, file_name="my_file"):
+        """
+        Trains the robot arm in the given train_steps times.
+        It takes the Q table, picks up randomly a State and a possible next State and calculates the Q value for the Action
+        """
+
+        # generates the blocler_rectangles_list
+        self.blocker_rectangles_list = []
+        for blocker_pos in blocker_position_list:
+            rectangle = Polygon([blocker_pos[0], [blocker_pos[1][0], blocker_pos[0][1]], blocker_pos[1], [blocker_pos[0][0],blocker_pos[1][1]]])
+            self.blocker_rectangles_list.append(rectangle)
+
+        # empty Q table
+        if not self.Q:
+
+            # generates and fills up the Q table
+            self.fill_up_q_table()
+
+        # generates the possible state list out of the Q table
+        state_list = list(self.Q.keys())
+
+        # records start time
+        start_time = time.perf_counter()
+        end_time = "?"
+        elapsed_time = "?"
+
+        for t in range(start_training_steps, end_training_steps):
+
+            # progress bar
+            ##self.print_progress_bar(t, training_steps-1, prefix = 'Train   Progress:', suffix = 'Complete with goal reward ' if self.is_goal_reward else 'Complete ', length = 50)
+            self.print_progress_bar(t, end_training_steps-1, prefix = 'Train   Progress:', suffix = "Complete ({0}/{1}) ({2}s/{3}s) - {4}".format(end_training_steps, t, end_time, elapsed_time, "goal reward found" if self.is_goal_reward else ""),length = 50)
+
+            # go through all states
+            for from_state in state_list:
+
+                # collects the possibel states from the actual state
+                possible_states_with_reward_list = self.get_possible_states_with_reward(from_state)
+
+                # go through all possible next states
+                for to_state_with_reward in [item for item in possible_states_with_reward_list if item["reward"] > 0]:
+
+                    # collects data for the calculation
+                    to_state = to_state_with_reward["new_state"]
+                    action_index = to_state_with_reward["action_index"]
+                    action_reward = to_state_with_reward["reward"]
+
+                    Q_actual = self.Q[from_state][action_index]
+                    Q_next_max = np.max(self.Q[to_state])
+
+                    # calculates the Bellman equation
+                    TD = action_reward + self.gamma * Q_next_max - Q_actual
+                    self.Q[from_state][action_index] += self.alpha * TD
+
+            # save Q table after every 20 steps
+            if t % 20 == 0:
+                my_robot_arm.save_q(file_name, t)
+
+            recent_time = time.perf_counter()
+            elapsed_time = int(recent_time - start_time)
+
+            elapsed_perc = (t+1) / float(end_training_steps)
+            end_time = int(elapsed_time / elapsed_perc)
+
+        my_robot_arm.save_q(file_name, end_training_steps)
+
+        if self.is_goal_reward:
+            return True
+
+        else:
+            print("!!! There was NO goal Action found !!!")
+            return False
+
+
+
+
+    def save_q(self, name, trained_steps):
+        var_list = [self.alpha, self.gamma, self.angle_step, self.goal_position, self.blocker_position_list, self.arms_list, self.Q, trained_steps]
+        with open(name, 'wb') as f: 
+            pickle.dump(var_list, f)
 
     def load_q(self, name):
-        fr = open('q_' + str(name), 'rb')
-        self.Q = pickle.load(fr)
-        fr.close()
-
+        with open(name, 'rb') as f:
+            self.alpha, self.gamma, self.angle_step, self.goal_position, self.blocker_position_list, self.arms_list, self.Q, trained_steps = pickle.load(f)
         self.is_goal_reward = True
-
+        return trained_steps
 
     def get_optimal_route(self, start_state):
         """
@@ -357,17 +469,22 @@ class RobotArm(object):
         next_state = start_state
 
         if not self.is_goal_reward:
-            return route
+            route.append(next_state)
 
         while next_state not in route:
             route.append(next_state)
 
             actual_state = next_state
+
+            # if the state does NOT exist in the dict
+            if not self.Q.get(actual_state):
+                print("The Start-State is not valid")
+                break
+
             reward_list = self.Q[actual_state]
 
             # it selects the first occurence of the highest value
             #next_action_index = np.argmax(reward_list)
-
 
             # this section responsible for picking up the Action with the highest Q value
             # If there are more than 1 highest value then it selects the first which is NOT in the route list yet
@@ -375,6 +492,9 @@ class RobotArm(object):
             possible_next_action_index_list = np.argwhere(reward_list==np.amax(reward_list)).flatten().tolist()
             previous_arm_index = None
             i = 0
+
+#            print("reward: {0}possible_next_action_index_list)
+
             while True:
                 next_action_func = self.actions[possible_next_action_index_list[i]]
                 next_state, arm_index = next_action_func(actual_state=actual_state)
@@ -382,6 +502,12 @@ class RobotArm(object):
                 i += 1
                 if next_state not in route or i >= len(possible_next_action_index_list):
                     break
+
+        print(route)
+
+        if route and start_state in route:
+            my_robot_arm_animate = RobotArmAnimate()
+            my_robot_arm_animate.animate(self.arms_list, route, self.goal_position, self.blocker_position_list, pause_between_states=0.2)
 
         return route
 
@@ -393,26 +519,28 @@ class RobotArm(object):
 #
 # ############################
 
-my_robot_arm = RobotArm(angle_step=5, goal_position=((175,5),(185,15)))
+training = True
+to_continue = False
 
-#my_robot_arm.train(3000000)
-#my_robot_arm.save_q("5_3000000_175-5-185-15")
-my_robot_arm.load_q("5_3000000_175-5-185-15")
+angle = 5
+end_training_steps = 100
+goal_position=((94,74),(96,76))
+blocker_position_list=[((-110,0), (-90,250)), ((70, 76), (96, 250)), ((70, 0), (76, 50))]
 
-route = my_robot_arm.get_optimal_route("90_0_0")
-print(route)
+my_robot_arm = RobotArm(angle_step=angle, goal_position=goal_position, blocker_position_list=blocker_position_list)
 
-#pprint(my_robot_arm.Q)
+file_name = "{0}_{1}_{2}.q".format(angle, end_training_steps, str(goal_position).replace(" ",""))
+start_training_steps = 0
+if to_continue or not training:
+    start_training_steps = my_robot_arm.load_q(file_name)
+    print("Q-table loaded with {0} training steps".format(start_training_steps))
+if training:
+    print("Training starts from: {0} till: {1}".format(start_training_steps, end_training_steps))
+#    my_robot_arm.training(start_training_steps, end_training_steps, file_name)
+    my_robot_arm.systematic_training(start_training_steps, end_training_steps, file_name)
+    print("Training finished ...")
 
-
-
-
-
-#pos=my_robot_arm.get_possible_states_with_reward("0_0_0")
-#pos=get_position("0_90_90")
-#pprint(pos)
-
-#pprint(my_robot_arm.Q["0_0_0"])
-#pprint(my_robot_arm.Q["0_5_0"])
+#route = my_robot_arm.get_optimal_route('-15_100_-40')
+route = my_robot_arm.get_optimal_route("0_0_0")
 
 

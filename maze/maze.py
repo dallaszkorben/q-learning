@@ -1,4 +1,4 @@
-#!/home/akoel/Projects/python/q-learning/path_in_3x3/env/bin/python
+#!env/bin/python
 
 import numpy as np
 
