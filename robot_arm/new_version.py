@@ -13,7 +13,9 @@ from shapely.geometry import Polygon
 
 class RobotArm(object):
 
-    GOAL_REWARD = 999
+    GOAL_REWARD = 99999
+    SIMPLE_REWARD = -1
+    DISABLED_REWARD = None
 
     def __init__(self, angle_step, alpha=0.9, gamma=0.75, goal_position=((95,5),(105,15)), blocker_position_list=[]):
 
@@ -29,9 +31,9 @@ class RobotArm(object):
 
         # Arms
         self.arms_list = [
-            {"name": "arm0", "length": 100, "min_angle": -45, "max_angle": 0},
-            {"name": "arm1", "length": 80, "min_angle": -45, "max_angle": 135},
-            {"name": "arm2", "length": 50, "min_angle": -45, "max_angle": 0}
+            {"name": "arm0", "length": 100, "min_angle": -46, "max_angle": 0},
+            {"name": "arm1", "length": 80, "min_angle": -46, "max_angle": 136},
+            {"name": "arm2", "length": 50, "min_angle": -46, "max_angle": 0}
         ]
 #        self.arms_list = [
 #            {"name": "arm0", "length": 100, "min_angle": -45, "max_angle": 45},
@@ -279,8 +281,8 @@ class RobotArm(object):
                 # get the new State in case of the next Action
                 new_state, arm_index = func(actual_state=actual_state)
 
-                # The default Reward for the Action is 0
-                reward = 0
+                # The default Reward for the Action is Disabled
+                reward = self.DISABLED_REWARD
 
                 # Fetches the list of arm's positions to be able to calculate if 
                 # -the Action is valid (reward=1) 
@@ -303,7 +305,7 @@ class RobotArm(object):
                     #elif self.is_prefered_state(new_state): 
                     #    reward = 10
                     else:
-                        reward = 1
+                        reward = self.SIMPLE_REWARD
 
                     states.append({"new_state":new_state, "reward":reward, "action_index":index})
 
@@ -352,7 +354,9 @@ class RobotArm(object):
                 possible_states_with_reward_list = self.R[from_state]
 
                 # go through all possible next states
-                for to_state_with_reward in [item for item in possible_states_with_reward_list if item["reward"] > 0]:
+#                for to_state_with_reward in [item for item in possible_states_with_reward_list if item["reward"] > 0]:
+                for to_state_with_reward in [item for item in possible_states_with_reward_list if item["reward"] is not None]:
+
 
                     # collects data for the calculation
                     to_state = to_state_with_reward["new_state"]
@@ -363,8 +367,17 @@ class RobotArm(object):
                     Q_next_max = np.max(self.Q[to_state])
 
                     # calculates the Bellman equation
-                    TD = action_reward + self.gamma * Q_next_max - Q_actual
-                    self.Q[from_state][action_index] += self.alpha * TD
+#                    TD = action_reward + self.gamma * Q_next_max - Q_actual
+#                    self.Q[from_state][action_index] += self.alpha * TD
+
+#                    if from_state == "-15_130_-30":
+#                        print("From state: {0}, To state: {1}, action index: {2} Q(from state): {3}, Q next max: {4}".format(from_state, to_state, action_index, Q_actual, Q_next_max))
+
+                    if to_state != from_state:
+                        self.Q[from_state][action_index] = Q_next_max+action_reward
+                    else:
+                        self.Q[from_state][action_index] = action_reward
+
 
             recent_time = time.perf_counter()
             elapsed_time = int(recent_time - start_time)
@@ -454,12 +467,12 @@ class RobotArm(object):
 # ############################
 
 training = True
-to_continue = True
+to_continue = False
 
 angle = 1
-end_training_steps = 1000
+end_training_steps = 500
 goal_position=((94,74),(96,76))
-blocker_position_list=[((-110,0), (-90,250)), ((70, 76), (96, 250)), ((70, 0), (76, 50))]
+blocker_position_list=[((-110,0), (-90,250)), ((70, 76), (96, 250)), ((70, 0), (76, 65))]
 
 my_robot_arm = RobotArm(angle_step=angle, goal_position=goal_position, blocker_position_list=blocker_position_list)
 
@@ -476,6 +489,6 @@ if training:
 
 #route = my_robot_arm.get_optimal_route('-15_100_-40')
 route = my_robot_arm.get_optimal_route("0_0_0")
-#route = my_robot_arm.get_optimal_route("1_1_1")
+#route = my_robot_arm.get_optimal_route("-15_130_-30")
 
 
