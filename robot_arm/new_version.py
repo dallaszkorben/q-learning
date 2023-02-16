@@ -466,7 +466,7 @@ class RobotArm(object):
 #
 # ############################
 
-training = True
+training = False
 to_continue = False
 
 angle = 1
@@ -488,7 +488,7 @@ if training:
     print("Training finished ...")
 
 #route = my_robot_arm.get_optimal_route('-15_100_-40')
-route = my_robot_arm.get_optimal_route("0_0_0")
-#route = my_robot_arm.get_optimal_route("-15_130_-30")
+#route = my_robot_arm.get_optimal_route("0_0_0")
+route = my_robot_arm.get_optimal_route("-45_40_0")
 
 
